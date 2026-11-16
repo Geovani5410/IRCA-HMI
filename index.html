@@ -60,6 +60,7 @@ footer{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}
       <div style="color:var(--m);font-size:12px;margin:6px 0 10px">90° = posición de reposo</div>
       <button class="mini" id="vG">Vista general</button>
       <button class="mini" id="vB">Enfocar brazo activo</button>
+      <button class="mini" id="vC">Girar carro 180°</button>
     </div>
     <div class="card" style="flex:1"><h3>Etapa</h3>
       <div class="kv"><span>Brazos</span><b id="nb">-</b></div>
@@ -96,15 +97,17 @@ const ETAPAS=[
  {n:'SALPICADERAS',a:[3,4],sec:1,k:[H,[60,80,100],[60,65,115],[120,80,100],[120,65,115],H]},
  {n:'COFRE Y DEFENSA',a:[3,4],sec:1,k:[H,[90,70,115],[90,55,130],[90,70,115],H]},
  {n:'PARABRISAS Y VIDRIO TRASERO',a:[5,6],sec:2,k:[H,[75,80,105],[75,65,120],[105,80,105],H]},
- {n:'SISTEMA MECÁNICO',a:[],sec:3},
  {n:'PUERTAS',a:[5,6],sec:2,k:[H,[55,75,110],[55,60,125],[125,75,110],[125,60,125],H]},
+ {n:'SISTEMA MECÁNICO',a:[],sec:3},
 ];
 const tabs=$('tabs');
 ETAPAS.forEach((e,i)=>tabs.insertAdjacentHTML('beforeend',`<div>${i+1}. ${e.n.split(' ')[0]}</div>`));
 
 // ---------- DISTRIBUCIÓN DE LA MESA (metros) ----------
-const ANCHO=1.5, ALTO=0.9, SEC=ANCHO/4, DLADO=0.30;   // 4 secciones iguales; brazos a ±30 cm de la banda
-const LAY=[ [1,0,-1],[2,0,1],[3,1,-1],[4,1,1],[5,2,-1],[6,2,1] ];  // [brazo, sección, lado]; la sección 3 queda para el elevador
+const ANCHO=1.5, ALTO=0.9, SEC=ANCHO/4, DLADO=0.30;
+const LAY=[ [1,0,-1],[2,0,1],[3,1,-1],[4,1,1],[5,2,-1],[6,2,1] ];  // [brazo, sección, lado]
+// posición X del carro en cada etapa (la 1 es la entrada, la 6 el elevador)
+const POS=[SEC*.5,SEC*.5,SEC*1.5,SEC*1.5,SEC*2.5,SEC*2.5,SEC*3.5];
 
 // ---------- CALIBRACIÓN DEL BRAZO (mm, ejes del CAD) ----------
 const P={j1:new THREE.Vector3(78,148,46),j2:new THREE.Vector3(112,105,95),j3:new THREE.Vector3(206.5,150,94)};
@@ -123,21 +126,17 @@ scene.add(new THREE.HemisphereLight(0xffffff,0x445566,2));
 const sun=new THREE.DirectionalLight(0xffffff,1.5);sun.position.set(1,2,1.5);scene.add(sun);
 new ResizeObserver(()=>{const w=vista.clientWidth,h=vista.clientHeight;rd.setSize(w,h);cam.aspect=w/h;cam.updateProjectionMatrix()}).observe(vista);
 
-// mesa
 const mesa=new THREE.Mesh(new THREE.BoxGeometry(ANCHO,0.01,ALTO),new THREE.MeshStandardMaterial({color:0x0e1822}));
 mesa.position.set(ANCHO/2,-0.005,0);scene.add(mesa);
 const borde=new THREE.LineSegments(new THREE.EdgesGeometry(mesa.geometry),new THREE.LineBasicMaterial({color:0x2b4660}));
 borde.position.copy(mesa.position);scene.add(borde);
-// secciones (resaltan la que trabaja)
 const pads=[];
 for(let i=0;i<4;i++){
   const m=new THREE.Mesh(new THREE.PlaneGeometry(SEC-.01,ALTO-.01),new THREE.MeshBasicMaterial({color:0x19c6d1,transparent:true,opacity:.05}));
   m.rotation.x=-Math.PI/2;m.position.set((i+.5)*SEC,.002,0);scene.add(m);pads.push(m);
 }
-// banda
 const banda=new THREE.Mesh(new THREE.PlaneGeometry(ANCHO,0.12),new THREE.MeshBasicMaterial({color:0x1a2a3a}));
 banda.rotation.x=-Math.PI/2;banda.position.set(ANCHO/2,.004,0);scene.add(banda);
-// divisiones y rótulos
 const pts=[];for(let k=1;k<4;k++)pts.push(new THREE.Vector3(k*SEC,.006,-ALTO/2),new THREE.Vector3(k*SEC,.006,ALTO/2));
 scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0x2b4660})));
 function rotulo(txt,x){
@@ -147,20 +146,45 @@ function rotulo(txt,x){
   m.rotation.x=-Math.PI/2;m.position.set(x,.008,ALTO/2-.03);scene.add(m);
 }
 ['SECCIÓN 1','SECCIÓN 2','SECCIÓN 3','ELEVADOR'].forEach((t,i)=>rotulo(t,(i+.5)*SEC));
-// marcador del elevador (sección 4)
 const elev=new THREE.Mesh(new THREE.BoxGeometry(.22,.2,.22),new THREE.MeshStandardMaterial({color:0x19c6d1,transparent:true,opacity:.12}));
 elev.position.set(SEC*3.5,.1,0);
 const eb=new THREE.LineSegments(new THREE.EdgesGeometry(elev.geometry),new THREE.LineBasicMaterial({color:0x19c6d1}));
 eb.position.copy(elev.position);scene.add(elev,eb);
+
+// ---------- CARRO (Toyota Corolla, cabe en 20 x 10 cm) ----------
+const carro=new THREE.Group(),giro=new THREE.Group();
+carro.add(giro);giro.rotation.y=Math.PI;carro.position.set(.11,.012,0);scene.add(carro);
+let carroExt=null;   // si el hardware manda la posición, se usa en lugar del demo
+new STLLoader().load(encodeURI('toyota corolla.STL'),geo=>{
+  geo.computeBoundingBox();
+  const sz=geo.boundingBox.getSize(new THREE.Vector3());
+  const ax=[0,1,2].sort((a,b)=>sz.getComponent(b)-sz.getComponent(a));   // [largo, ancho, alto]
+  const fila=(i,s=1)=>{const r=[0,0,0];r[i]=s;return r};
+  const mk=s=>new THREE.Matrix4().set(...fila(ax[0]),0,...fila(ax[2]),0,...fila(ax[1],s),0,0,0,0,1);
+  let M=mk(1);if(M.determinant()<0)M=mk(-1);                              // largo→X, alto→Y, ancho→Z
+  geo.applyMatrix4(M);geo.computeBoundingBox();
+  const b=geo.boundingBox,c=b.getCenter(new THREE.Vector3()),z=b.getSize(new THREE.Vector3());
+  geo.translate(-c.x,-b.min.y,-c.z);                                      // centrado y apoyado en la banda
+  const m=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:0xe3e9f0,roughness:.35,metalness:.3}));
+  m.scale.setScalar(Math.min(.2/z.x,.1/z.z));
+  giro.add(m);log('Carro cargado');
+},undefined,()=>log('No cargó toyota corolla.STL','e'));
+$('vC').onclick=()=>giro.rotation.y+=Math.PI;
+function posCarro(){
+  const from=idx===0?.11:POS[idx-1],to=POS[idx];
+  const x=from+(to-from)*ease(Math.min(t/(D*.3),1));
+  const y=idx===6?.05*ease(Math.min(Math.max((t/D-.3)/.4,0),1)):0;   // en el elevador sube y se queda arriba
+  return [x,y];
+}
 
 // ---------- 6 BRAZOS (4 STL cargados una sola vez y compartidos) ----------
 const GEO={},arms={};
 function crearBrazo(id,sec,lado){
   const w=new THREE.Group();
   w.position.set((sec+.5)*SEC,0,lado*DLADO);
-  w.rotation.y=lado*Math.PI/2;                         // el brazo mira hacia la banda
+  w.rotation.y=lado*Math.PI/2;
   const cad=new THREE.Group();cad.rotation.x=-Math.PI/2;cad.scale.setScalar(0.001);
-  cad.position.set(-0.078,0,0.150);w.add(cad);        // centra la base del CAD en el origen
+  cad.position.set(-0.078,0,0.150);w.add(cad);
   const j1=new THREE.Group(),j2=new THREE.Group(),j3=new THREE.Group();
   cad.add(j1);j1.add(j2);j2.add(j3);
   j1.position.copy(P.j1);j2.position.copy(P.j2).sub(P.j1);j3.position.copy(P.j3).sub(P.j2);
@@ -169,7 +193,6 @@ function crearBrazo(id,sec,lado){
     if(o)m.position.copy(o).negate();if(aj)m.position.add(aj);par.add(m);return m.material};
   const mats=[mk('Base_219',0x8a97a3,cad),mk('Brazo_1',0xff8a00,j1,P.j1),
               mk('Brazo_2',0x33aaff,j2,P.j2,AJ.j2),mk('Brazo_3',0x66dd66,j3,P.j3,AJ.j3)].filter(Boolean);
-  // el brazo de un lado gira la base en sentido contrario para que el par se mueva en espejo
   scene.add(w);arms[id]={w,j1,j2,j3,mats,sg:[lado*signo[0],signo[1],signo[2]]};
 }
 const ld=new STLLoader();
@@ -178,7 +201,7 @@ Promise.all(['Base_219','Brazo_1','Brazo_2','Brazo_3'].map(n=>new Promise(ok=>
 ))).then(()=>{LAY.forEach(([id,sec,lado])=>crearBrazo(id,sec,lado));pintaEtapa();aplicarTodos()});
 
 // ---------- POSE DE SERVOS ----------
-const servo=Array.from({length:7},()=>[90,90,90]);   // índice = número de brazo (1-6)
+const servo=Array.from({length:7},()=>[90,90,90]);
 let sel=1;
 $('sel').innerHTML=LAY.map(([id,sec])=>`<option value="${id}">Brazo ${id} (sección ${sec+1})</option>`).join('');
 function aplicarPose(n){
@@ -191,7 +214,6 @@ function setServos(n,a){if(!servo[n])return;a.forEach((v,i)=>servo[n][i]=v);apli
 $('sel').onchange=e=>{sel=+e.target.value;aplicarPose(sel)};
 [0,1,2].forEach(i=>$('s'+i).oninput=e=>{$('man').checked=true;servo[sel][i]=+e.target.value;aplicarPose(sel)});
 $('vG').onclick=vistaGeneral;
-// enfoca uno de los brazos que están trabajando (si trabajan en par, el primero)
 $('vB').onclick=()=>{
   const e=ETAPAS[idx],n=e.a[0];
   if(!n){
@@ -226,7 +248,7 @@ $('bR').onclick=()=>{idx=0;t=0;[1,2,3,4,5,6].forEach(n=>setServos(n,H));pintaEta
 $('bE').onclick=()=>{setEstado('emergencia','EMERGENCIA','bad');log('PARO DE EMERGENCIA','e')};
 
 // ---------- API PARA EL ESP32 / ROS ----------
-window.hmi={servos:(n,a,b,c)=>setServos(n,[a,b,c]),etapa:n=>{idx=n-1;t=0;pintaEtapa();log('Etapa '+n)}};
+window.hmi={servos:(n,a,b,c)=>setServos(n,[a,b,c]),etapa:n=>{idx=n-1;t=0;pintaEtapa();log('Etapa '+n)},carro:x=>{carroExt=x}};
 const q=new URLSearchParams(location.search);
 if(q.get('cam'))$('camBox').innerHTML=`<img src="${q.get('cam')}">`;
 if(q.get('ws')){const conn=()=>{const w=new WebSocket(q.get('ws'));
@@ -253,6 +275,8 @@ rd.setAnimationLoop(()=>{
       if(idx>=ETAPAS.length){idx=0;carros++;$('car').textContent=carros;log('Carro terminado','w')}
       pintaEtapa();log('Etapa '+(idx+1)+' iniciada')}
   }
+  const [cx,cy]=carroExt!==null?[carroExt,0]:posCarro();
+  carro.position.set(cx,.012+cy,0);
   const pr=(idx+Math.min(t/D,1))/ETAPAS.length*100;
   $('barI').style.width=pr+'%';$('pct').textContent='Progreso: '+Math.round(pr)+' %';
   $('te').textContent=t.toFixed(1)+' s';
@@ -261,3 +285,6 @@ rd.setAnimationLoop(()=>{
 pintaEtapa();log('HMI listo (modo demo)');
 </script>
 </html>
+
+
+
