@@ -155,7 +155,7 @@ eb.position.copy(elev.position);scene.add(elev,eb);
 const carro=new THREE.Group(),giro=new THREE.Group();
 carro.add(giro);giro.rotation.y=Math.PI;carro.position.set(.11,.012,0);scene.add(carro);
 let carroExt=null;   // si el hardware manda la posición, se usa en lugar del demo
-new STLLoader().load(encodeURI('toyota corolla.STL'),geo=>{
+new STLLoader().load(encodeURI('assets/toyota corolla.STL'),geo=>{
   geo.computeBoundingBox();
   const sz=geo.boundingBox.getSize(new THREE.Vector3());
   const ax=[0,1,2].sort((a,b)=>sz.getComponent(b)-sz.getComponent(a));   // [largo, ancho, alto]
@@ -197,7 +197,7 @@ function crearBrazo(id,sec,lado){
 }
 const ld=new STLLoader();
 Promise.all(['Base_219','Brazo_1','Brazo_2','Brazo_3'].map(n=>new Promise(ok=>
-  ld.load(n+'.stl',g=>{GEO[n]=g;ok()},undefined,()=>{log('No cargó '+n+'.stl','e');ok()})
+  ld.load('assets/'+n+'.stl',g=>{GEO[n]=g;ok()},undefined,()=>{log('No cargó '+n+'.stl','e');ok()})
 ))).then(()=>{LAY.forEach(([id,sec,lado])=>crearBrazo(id,sec,lado));pintaEtapa();aplicarTodos()});
 
 // ---------- POSE DE SERVOS ----------
