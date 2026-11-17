@@ -1,0 +1,30 @@
+# MediaMTX - video de la webcam USB (/dev/video0) -> WebRTC (latencia < 500 ms)
+# Pagina del video:  http://<ip-rpi>:8889/cam
+#
+# Antes de usarlo, revisa lo que soporta tu camara:
+#   v4l2-ctl --list-formats-ext -d /dev/video0
+# Si no tiene MJPEG, quita "-input_format mjpeg" (usara YUYV, mas pesado por USB).
+
+logLevel: info
+
+rtsp: yes
+rtspAddress: :8554
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigin: '*'
+
+hls: no
+rtmp: no
+srt: no
+
+paths:
+  cam:
+    # ffmpeg captura /dev/video0, codifica H264 (baseline, sin B-frames) y lo publica en MediaMTX
+    runOnInit: >
+      ffmpeg -hide_banner -loglevel warning
+      -f v4l2 -input_format mjpeg -framerate 30 -video_size 640x480 -i /dev/video0
+      -c:v libx264 -preset ultrafast -tune zerolatency -profile:v baseline -pix_fmt yuv420p
+      -bf 0 -g 30 -b:v 1500k
+      -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
+    runOnInitRestart: yes
